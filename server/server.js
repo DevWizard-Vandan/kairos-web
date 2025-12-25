@@ -68,10 +68,18 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        const result = await pool.query('SELECT id, username, password, avatar_url, bio FROM users WHERE username = $1', [username]);
         if (result.rows.length === 0) return res.status(401).json({ error: 'User not found' });
         if (!await bcrypt.compare(password, result.rows[0].password)) return res.status(401).json({ error: 'Invalid password' });
-        res.json({ user: { id: result.rows[0].id, username: result.rows[0].username }, token: jwt.sign({ id: result.rows[0].id }, 'secret') });
+        res.json({
+            user: {
+                id: result.rows[0].id,
+                username: result.rows[0].username,
+                avatar_url: result.rows[0].avatar_url,
+                bio: result.rows[0].bio
+            },
+            token: jwt.sign({ id: result.rows[0].id }, 'secret')
+        });
     } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -80,7 +88,7 @@ app.get('/api/users/search', async (req, res) => {
     try {
         const { query } = req.query;
         if (!query) return res.json([]);
-        const result = await pool.query("SELECT id, username, avatar_color FROM users WHERE username ILIKE $1 LIMIT 10", [`%${query}%`]);
+        const result = await pool.query("SELECT id, username, avatar_url, bio FROM users WHERE username ILIKE $1 LIMIT 10", [`%${query}%`]);
         res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -113,7 +121,7 @@ app.get('/api/conversations/:userId', async (req, res) => {
     const { userId } = req.params;
     const result = await pool.query(`
         SELECT DISTINCT ON (c.updated_at)
-            c.id as conversation_id, u.id as other_user_id, u.username, u.avatar_color, c.last_message, c.updated_at
+            c.id as conversation_id, u.id as other_user_id, u.username, u.avatar_url, c.last_message, c.updated_at
         FROM conversations c
         JOIN users u ON (u.id = c.user1_id OR u.id = c.user2_id)
         WHERE (c.user1_id = $1 OR c.user2_id = $1) AND u.id != $1
@@ -141,6 +149,22 @@ app.get('/api/messages/:user1/:user2', async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch history" });
+    }
+});
+
+// UPDATE PROFILE
+app.put('/api/users/profile', async (req, res) => {
+    try {
+        const { userId, bio, avatarUrl } = req.body;
+        // Simple validation could go here
+        const result = await pool.query(
+            'UPDATE users SET bio = COALESCE($1, bio), avatar_url = COALESCE($2, avatar_url) WHERE id = $3 RETURNING id, username, bio, avatar_url',
+            [bio, avatarUrl, userId]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Update failed" });
     }
 });
 
