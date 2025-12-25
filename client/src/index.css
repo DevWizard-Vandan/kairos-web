@@ -1,0 +1,72 @@
+/* client/src/index.css */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg-app: #111b21;
+  --bg-panel: #202c33;
+  --bg-inset: #2a3942;
+
+  --primary: #00a884;
+  /* WhatsApp Green */
+  --accent: #06cf9c;
+  --danger: #ef4444;
+
+  --text-main: #e9edef;
+  --text-muted: #8696a0;
+
+  --border: #374045;
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  --font-main: 'Inter', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  outline: none;
+}
+
+body {
+  font-family: var(--font-main);
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Utilities */
+.btn {
+  cursor: pointer;
+  border: none;
+  font-weight: 600;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.btn:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+/* Animation Classes */
+.fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
