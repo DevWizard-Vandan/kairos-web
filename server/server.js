@@ -289,23 +289,68 @@ async function startServer() {
     app.set('io', io);
 
     io.on('connection', async (socket) => {
-        // 1. LOGIN & JOIN GROUP ROOMS
+        // 1. LOGIN & STATUS UPDATE
         socket.on('login', async (userData) => {
             // Support both old (string id) and new (object) formats
             const userId = typeof userData === 'object' ? userData.id : userData;
             const username = typeof userData === 'object' ? userData.username : 'Unknown';
 
             onlineUsers.set(userId, socket.id);
-            // We need a global socketToUser map. Ideally declared at top level.
-            // For now, attaching to socket object or using a global map defined above.
-            // Let's assume socketToUser is defined.
             if (global.socketToUser) global.socketToUser.set(socket.id, { id: userId, username });
 
-            // Auto-join all group rooms this user belongs to
-            const groups = await pool.query('SELECT group_id FROM group_members WHERE user_id = $1', [userId]);
-            groups.rows.forEach(row => {
-                socket.join(row.group_id); // Join the socket room
-            });
+            // Broadcast to EVERYONE that this user is online
+            io.emit('user_status', { userId, status: 'online' });
+
+            // Send list of currently online users to the new person
+            const onlineIds = Array.from(onlineUsers.keys());
+            socket.emit('online_users', onlineIds);
+
+            // Auto-join groups
+            try {
+                const groups = await pool.query('SELECT group_id FROM group_members WHERE user_id = $1', [userId]);
+                groups.rows.forEach(row => socket.join(row.group_id));
+            } catch (err) {
+                console.error("Auto-join groups error:", err);
+            }
+        });
+
+        // 2. TYPING INDICATOR
+        socket.on('typing', (data) => {
+            const { to, from, isGroup, groupId } = data;
+            if (isGroup) {
+                // Broadcast to group room (exclude sender)
+                socket.to(groupId).emit('display_typing', { from, isGroup: true, groupId });
+            } else {
+                // Send to specific user
+                const socketId = onlineUsers.get(to);
+                if (socketId) io.to(socketId).emit('display_typing', { from, isGroup: false });
+            }
+        });
+
+        socket.on('stop_typing', (data) => {
+            const { to, isGroup, groupId } = data;
+            if (isGroup) {
+                socket.to(groupId).emit('hide_typing', { from: data.from, groupId });
+            } else {
+                const socketId = onlineUsers.get(to);
+                if (socketId) io.to(socketId).emit('hide_typing', { from: data.from });
+            }
+        });
+
+        // 3. DISCONNECT
+        socket.on('disconnect', () => {
+            // Find userId by socketId
+            let userIdToRemove = null;
+            for (const [uid, sid] of onlineUsers.entries()) {
+                if (sid === socket.id) {
+                    userIdToRemove = uid;
+                    break;
+                }
+            }
+            if (userIdToRemove) {
+                onlineUsers.delete(userIdToRemove);
+                io.emit('user_status', { userId: userIdToRemove, status: 'offline' });
+            }
         });
 
         // ... (Private/Group Messages remain same) ...
@@ -427,9 +472,7 @@ async function startServer() {
             socket.rooms.forEach(room => {
                 socket.to(room).emit('user_left', socket.id);
             });
-            onlineUsers.forEach((value, key) => {
-                if (value === socket.id) onlineUsers.delete(key);
-            });
+
             if (global.socketToUser) global.socketToUser.delete(socket.id);
         });
     });

@@ -35,6 +35,11 @@ export default function Chat({ user, onLogout }) {
     const [stream, setStream] = useState(null);
     const streamRef = useRef(null); // Ref to current stream for callbacks
 
+    // --- PRESENCE & TYPING STATE ---
+    const [onlineUsers, setOnlineUsers] = useState([]);
+    const [typingUsers, setTypingUsers] = useState([]);
+    const [isTypingTimeout, setIsTypingTimeout] = useState(null);
+
     // Sync streamRef
     useEffect(() => {
         streamRef.current = stream;
@@ -55,12 +60,40 @@ export default function Chat({ user, onLogout }) {
         audio: true, onStop: (blobUrl, blob) => handleVoiceUpload(blob)
     });
 
+    // Sync activeChatRef for socket listeners
+    const activeChatRef = useRef(activeChat);
+    useEffect(() => {
+        activeChatRef.current = activeChat;
+    }, [activeChat]);
+
     // --- INIT SOCKET ---
     useEffect(() => {
         const newSocket = io(ENDPOINT);
         setSocket(newSocket);
         // Send object with username for group calls
         newSocket.emit("login", { id: user.id, username: user.username });
+
+        // --- PRESENCE LISTENERS ---
+        newSocket.on("online_users", (users) => {
+            setOnlineUsers(users);
+        });
+
+        newSocket.on("user_status", ({ userId, status }) => {
+            if (status === 'online') {
+                setOnlineUsers(prev => [...new Set([...prev, userId])]);
+            } else {
+                setOnlineUsers(prev => prev.filter(id => id !== userId));
+            }
+        });
+
+        // --- TYPING LISTENERS ---
+        newSocket.on("display_typing", (data) => {
+            setTypingUsers(prev => [...prev, data.from]);
+        });
+
+        newSocket.on("hide_typing", (data) => {
+            setTypingUsers(prev => prev.filter(id => id !== data.from));
+        });
 
         // PRIVATE MESSAGE
         newSocket.on("private_message", (msg) => {
@@ -174,6 +207,31 @@ export default function Chat({ user, onLogout }) {
             socket.emit("private_message", msgData);
         }
         setNewMessage(""); setTimeout(scrollToBottom, 50);
+
+    };
+
+    const handleTyping = (e) => {
+        if (!activeChat) return;
+
+        // Emit "I am typing"
+        const data = {
+            to: activeChat.isGroup ? null : activeChat.other_user_id,
+            from: user.id,
+            isGroup: activeChat.isGroup,
+            groupId: activeChat.isGroup ? activeChat.id : null
+        };
+
+        socket.emit('typing', data);
+
+        // Clear previous timeout (debounce)
+        if (isTypingTimeout) clearTimeout(isTypingTimeout);
+
+        // Stop typing after 2 seconds of inactivity
+        const timeout = setTimeout(() => {
+            socket.emit('stop_typing', data);
+        }, 2000);
+
+        setIsTypingTimeout(timeout);
     };
 
     // --- VIDEO LOGIC (HYBRID) ---
@@ -321,6 +379,7 @@ export default function Chat({ user, onLogout }) {
                 user={currentUser} chats={chats} activeChat={activeChat} openChat={openChat}
                 searchTerm={searchTerm} handleSearch={(e) => setSearchTerm(e.target.value)} setShowSettings={setShowSettings} onLogout={onLogout}
                 onOpenCreateGroup={() => setShowCreateGroup(true)}
+                onlineUsers={onlineUsers}
             />
             <ChatWindow
                 activeChat={activeChat} messages={messages} user={user}
@@ -329,6 +388,12 @@ export default function Chat({ user, onLogout }) {
                 status={status} startRecording={startRecording} stopRecording={stopRecording}
                 messagesEndRef={messagesEndRef} callUser={startCall}
                 onAddMember={() => setShowAddMember(true)}
+                isTyping={activeChat && (
+                    activeChat.isGroup
+                        ? typingUsers.some(id => id !== user.id) // Simplified for groups
+                        : typingUsers.includes(activeChat.other_user_id)
+                )}
+                handleTyping={handleTyping}
             />
             <VideoCall
                 callActive={callActive} receivingCall={receivingCall} callAccepted={callAccepted}

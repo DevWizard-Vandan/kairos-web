@@ -3,7 +3,7 @@ import { Avatar } from './SettingsModal';
 
 export default function Sidebar({
     user, chats, activeChat, openChat,
-    searchTerm, handleSearch, setShowSettings, onLogout, onOpenCreateGroup
+    searchTerm, handleSearch, setShowSettings, onLogout, onOpenCreateGroup, onlineUsers
 }) {
     return (
         <div className="w-[380px] flex flex-col border-r border-[#374045] bg-[#111b21] h-full">
@@ -46,11 +46,19 @@ export default function Sidebar({
                         onClick={() => openChat(chat)}
                         className={`flex items-center p-3 cursor-pointer border-b border-[#202c33] hover:bg-[#202c33] transition-colors ${activeChat?.id === chat.id ? 'bg-[#2a3942]' : ''}`}
                     >
-                        <div className="mr-3 shrink-0"><Avatar url={chat.avatar || chat.avatar_url} name={chat.name || chat.username} size="w-12 h-12" text="text-lg" /></div>
+                        <div className="mr-3 shrink-0 relative">
+                            <Avatar url={chat.avatar || chat.avatar_url} name={chat.name || chat.username} size="w-12 h-12" text="text-lg" />
+                            {/* ONLINE INDICATOR (Only for direct chats, not groups) */}
+                            {!chat.isGroup && onlineUsers.includes(chat.id) && (
+                                <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-[#00a884] rounded-full border-2 border-[#111b21] z-10"></div>
+                            )}
+                        </div>
                         <div className="flex-1 min-w-0">
                             <div className="flex justify-between items-baseline mb-1">
                                 <span className="text-[#e9edef] text-base font-normal truncate">{chat.name || chat.username}</span>
-                                {chat.updated_at && <span className="text-[#8696a0] text-xs">{new Date(chat.updated_at).toLocaleDateString()}</span>}
+                                <span className="text-[#8696a0] text-xs">
+                                    {chat.updated_at && new Date(chat.updated_at).toLocaleDateString()}
+                                </span>
                             </div>
                             <div className="text-[#8696a0] text-sm truncate">{chat.last_message}</div>
                         </div>

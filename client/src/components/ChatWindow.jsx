@@ -7,7 +7,7 @@ export default function ChatWindow({
     activeChat, messages, user, newMessage, setNewMessage,
     sendMessage, fileInputRef, handleFileUpload,
     status, startRecording, stopRecording, messagesEndRef,
-    callUser, onAddMember
+    callUser, onAddMember, isTyping, handleTyping
 }) {
     if (!activeChat) return (
         <div className="flex-1 bg-[#222e35] flex flex-col items-center justify-center border-b-[6px] border-[#00a884]">
@@ -22,7 +22,14 @@ export default function ChatWindow({
             <div className="h-[64px] bg-[#202c33] flex items-center justify-between px-4 py-2 border-l border-[#374045] shrink-0">
                 <div className="flex items-center gap-4 cursor-pointer">
                     <Avatar url={activeChat.avatar_url} name={activeChat.name || activeChat.username} />
-                    <div className="text-[#e9edef] font-medium text-lg">{activeChat.name || activeChat.username}</div>
+                    <div className="flex flex-col justify-center">
+                        <div className="text-[#e9edef] font-medium text-lg leading-tight">{activeChat.name || activeChat.username}</div>
+                        {isTyping ? (
+                            <div className="text-[#00a884] text-xs font-medium animate-pulse">typing...</div>
+                        ) : (
+                            <div className="text-[#8696a0] text-xs">click for contact info</div>
+                        )}
+                    </div>
                 </div>
                 <div className="flex gap-6 text-[#aebac1]">
                     {activeChat.isGroup && (
@@ -50,7 +57,10 @@ export default function ChatWindow({
                     className="flex-1 bg-[#2a3942] rounded-lg px-4 py-2.5 text-[#d1d7db] outline-none border border-transparent focus:border-[#00a884]/30 placeholder-[#8696a0] transition-all"
                     placeholder="Type a message"
                     value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
+                    onChange={(e) => {
+                        setNewMessage(e.target.value);
+                        handleTyping(e);
+                    }}
                     onKeyPress={(e) => e.key === 'Enter' && sendMessage(newMessage)}
                 />
 
