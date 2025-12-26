@@ -3,7 +3,7 @@ import { Avatar } from './SettingsModal';
 
 export default function Sidebar({
     user, chats, activeChat, openChat,
-    searchTerm, handleSearch, setShowSettings, onLogout
+    searchTerm, handleSearch, setShowSettings, onLogout, onOpenCreateGroup
 }) {
     return (
         <div className="w-[380px] flex flex-col border-r border-[#374045] bg-[#111b21] h-full">
@@ -13,7 +13,16 @@ export default function Sidebar({
                     <Avatar url={user.avatar_url} name={user.username} />
                     <span className="font-medium text-[#e9edef]">{user.username}</span>
                 </div>
-                <button onClick={onLogout} title="Logout" className="p-2 hover:bg-[#374045] rounded-full transition"><LogOut size={20} className="text-[#aebac1]" /></button>
+                <div className="flex gap-3">
+                    {/* NEW GROUP BUTTON */}
+                    <button onClick={onOpenCreateGroup} title="New Group" className="p-2 hover:bg-[#374045] rounded-full transition">
+                        <UserPlus size={20} className="text-[#aebac1]" />
+                    </button>
+
+                    <button onClick={onLogout} title="Logout" className="p-2 hover:bg-[#374045] rounded-full transition">
+                        <LogOut size={20} className="text-[#aebac1]" />
+                    </button>
+                </div>
             </div>
 
             {/* Search */}
@@ -30,18 +39,17 @@ export default function Sidebar({
                 </div>
             </div>
 
-            {/* List */}
             <div className="flex-1 overflow-y-auto custom-scrollbar">
                 {chats.map((chat, idx) => (
                     <div
                         key={idx}
                         onClick={() => openChat(chat)}
-                        className={`flex items-center p-3 cursor-pointer border-b border-[#202c33] hover:bg-[#202c33] transition-colors ${activeChat?.other_user_id === chat.other_user_id ? 'bg-[#2a3942]' : ''}`}
+                        className={`flex items-center p-3 cursor-pointer border-b border-[#202c33] hover:bg-[#202c33] transition-colors ${activeChat?.id === chat.id ? 'bg-[#2a3942]' : ''}`}
                     >
-                        <div className="mr-3 shrink-0"><Avatar url={chat.avatar_url} name={chat.username} size="w-12 h-12" text="text-lg" /></div>
+                        <div className="mr-3 shrink-0"><Avatar url={chat.avatar || chat.avatar_url} name={chat.name || chat.username} size="w-12 h-12" text="text-lg" /></div>
                         <div className="flex-1 min-w-0">
                             <div className="flex justify-between items-baseline mb-1">
-                                <span className="text-[#e9edef] text-base font-normal truncate">{chat.username}</span>
+                                <span className="text-[#e9edef] text-base font-normal truncate">{chat.name || chat.username}</span>
                                 {chat.updated_at && <span className="text-[#8696a0] text-xs">{new Date(chat.updated_at).toLocaleDateString()}</span>}
                             </div>
                             <div className="text-[#8696a0] text-sm truncate">{chat.last_message}</div>

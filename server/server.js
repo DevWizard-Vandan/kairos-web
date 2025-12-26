@@ -51,6 +51,7 @@ const upload = multer({ storage });
 const redisClient = createClient({ socket: { host: '127.0.0.1', port: 6379 } });
 redisClient.on('error', (err) => console.log('Redis Error', err));
 const onlineUsers = new Map();
+global.socketToUser = new Map();
 
 // --- API ROUTES ---
 
@@ -87,8 +88,12 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/users/search', async (req, res) => {
     try {
         const { query } = req.query;
-        if (!query) return res.json([]);
-        const result = await pool.query("SELECT id, username, avatar_url, bio FROM users WHERE username ILIKE $1 LIMIT 10", [`%${query}%`]);
+        let result;
+        if (!query || query.trim() === '') {
+            result = await pool.query("SELECT id, username, avatar_url, bio FROM users ORDER BY username ASC LIMIT 20");
+        } else {
+            result = await pool.query("SELECT id, username, avatar_url, bio FROM users WHERE username ILIKE $1 LIMIT 20", [`%${query}%`]);
+        }
         res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -168,6 +173,106 @@ app.put('/api/users/profile', async (req, res) => {
     }
 });
 
+// --- GROUP ROUTES ---
+
+// 1. Create Group
+app.post('/api/groups', async (req, res) => {
+    try {
+        const { name, userIds, adminId } = req.body; // userIds is array of member IDs
+
+        // Create Group
+        const groupRes = await pool.query(
+            'INSERT INTO groups (name, admin_id) VALUES ($1, $2) RETURNING *',
+            [name, adminId]
+        );
+        const groupId = groupRes.rows[0].id;
+
+        // Add Members (Admin + Selected Users)
+        const members = [adminId, ...userIds];
+        for (const uid of members) {
+            await pool.query('INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)', [groupId, uid]);
+        }
+
+        res.json(groupRes.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Group creation failed" });
+    }
+});
+
+// 1b. Add Member to Group
+app.post('/api/groups/:groupId/members', async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { userIds } = req.body; // Array of user IDs
+
+        for (const uid of userIds) {
+            // Check if already exists to avoid errors (or use ON CONFLICT DO NOTHING)
+            await pool.query('INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [groupId, uid]);
+
+            // Notify User to Join Room
+            const io = req.app.get('io');
+            const socketId = onlineUsers.get(uid);
+            if (socketId && io) {
+                io.to(socketId).emit('added_to_group', { groupId, name: 'New Group' });
+            }
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to add members" });
+    }
+});
+
+// 1c. Get Group Members
+app.get('/api/groups/:groupId/members', async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const result = await pool.query(`
+            SELECT u.id, u.username, u.avatar_url, u.bio 
+            FROM group_members gm 
+            JOIN users u ON gm.user_id = u.id 
+            WHERE gm.group_id = $1
+        `, [groupId]);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: "Failed to fetch members" }); }
+});
+
+app.post('/api/groups/:groupId/notify', async (req, res) => {
+    // Internal helper or client triggered to notify users to join room
+    // Ideally this is part of the add-member route, let's fix that route directly.
+});
+
+// 2. Get My Groups
+app.get('/api/groups/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const result = await pool.query(`
+            SELECT g.* FROM groups g
+            JOIN group_members gm ON g.id = gm.group_id
+            WHERE gm.user_id = $1
+            ORDER BY g.updated_at DESC
+        `, [userId]);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 3. Get Group Messages
+app.get('/api/groups/:groupId/messages', async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        // Fetch messages with sender info
+        const result = await pool.query(`
+            SELECT m.*, u.username as sender_name, u.avatar_url as sender_avatar
+            FROM group_messages m
+            JOIN users u ON m.sender_id = u.id
+            WHERE m.group_id = $1
+            ORDER BY m.created_at ASC
+        `, [groupId]);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- SOCKET LOGIC ---
 async function startServer() {
     await redisClient.connect();
@@ -180,61 +285,152 @@ async function startServer() {
         }
     });
 
-    io.on('connection', (socket) => {
-        socket.on('login', (userId) => {
+    // Make io accessible to routes
+    app.set('io', io);
+
+    io.on('connection', async (socket) => {
+        // 1. LOGIN & JOIN GROUP ROOMS
+        socket.on('login', async (userData) => {
+            // Support both old (string id) and new (object) formats
+            const userId = typeof userData === 'object' ? userData.id : userData;
+            const username = typeof userData === 'object' ? userData.username : 'Unknown';
+
             onlineUsers.set(userId, socket.id);
+            // We need a global socketToUser map. Ideally declared at top level.
+            // For now, attaching to socket object or using a global map defined above.
+            // Let's assume socketToUser is defined.
+            if (global.socketToUser) global.socketToUser.set(socket.id, { id: userId, username });
+
+            // Auto-join all group rooms this user belongs to
+            const groups = await pool.query('SELECT group_id FROM group_members WHERE user_id = $1', [userId]);
+            groups.rows.forEach(row => {
+                socket.join(row.group_id); // Join the socket room
+            });
         });
 
+        // ... (Private/Group Messages remain same) ...
+
+        // --- GROUP VIDEO SIGNALING (Updated for Names) ---
+        // 1. User joins a voice/video room
+        socket.on("join_room", (roomId) => {
+            socket.join(roomId);
+            // Get all other users in this room
+            const roomSet = io.sockets.adapter.rooms.get(roomId) || new Set();
+            const usersInRoom = [];
+            roomSet.forEach(sid => {
+                if (sid !== socket.id) {
+                    const info = global.socketToUser ? global.socketToUser.get(sid) : { username: 'Unknown' };
+                    usersInRoom.push({ socketId: sid, info });
+                }
+            });
+            socket.emit("all_users", usersInRoom);
+        });
+
+        // 2. Existing user sends signal to new user
+        socket.on("sending_signal", payload => {
+            const callerInfo = global.socketToUser ? global.socketToUser.get(payload.callerID) : { username: 'Unknown' };
+            io.to(payload.userToSignal).emit('user_joined', {
+                signal: payload.signal,
+                callerID: payload.callerID,
+                info: callerInfo
+            });
+        });
+
+        // 2. PRIVATE MESSAGES (Existing Logic)
         socket.on('private_message', async (data) => {
             try {
                 const { to, from, text, type, mediaUrl } = data;
-
                 let convRes = await pool.query(`SELECT id FROM conversations WHERE (user1_id=$1 AND user2_id=$2) OR (user1_id=$2 AND user2_id=$1)`, [from, to]);
                 let convId = convRes.rows.length ? convRes.rows[0].id : (await pool.query(`INSERT INTO conversations (user1_id, user2_id, last_message) VALUES ($1, $2, 'Start of chat') RETURNING id`, [from, to])).rows[0].id;
 
-                // SAVE to DB
                 const msgRes = await pool.query(
-                    `INSERT INTO messages (conversation_id, sender_id, text, type, media_url, status) 
-                     VALUES ($1, $2, $3, $4, $5, 'sent') RETURNING id, created_at`,
+                    `INSERT INTO messages (conversation_id, sender_id, text, type, media_url, status) VALUES ($1, $2, $3, $4, $5, 'sent') RETURNING id, created_at`,
                     [convId, from, text || '', type || 'text', mediaUrl || null]
                 );
 
-                // Update Sidebar
-                let preview = type === 'audio' ? '🎤 Voice Message' : (type === 'image' ? '📷 Image' : text);
+                let preview = type === 'audio' ? '🎤 Voice' : (type === 'image' ? '📷 Image' : text);
                 await pool.query(`UPDATE conversations SET last_message = $1, updated_at = NOW() WHERE id = $2`, [preview, convId]);
 
                 const fullMsg = { ...data, id: msgRes.rows[0].id, status: 'sent', timestamp: msgRes.rows[0].created_at };
 
                 const recipientSocket = onlineUsers.get(to);
-                if (recipientSocket) {
-                    io.to(recipientSocket).emit('private_message', fullMsg);
-                }
+                if (recipientSocket) io.to(recipientSocket).emit('private_message', fullMsg);
                 socket.emit('message_sent', fullMsg);
-
-            } catch (err) {
-                console.error("Socket Error:", err);
-            }
+            } catch (err) { console.error(err); }
         });
 
-        // 1. INITIATE CALL
+        // 3. GROUP MESSAGES (New Logic)
+        socket.on('group_message', async (data) => {
+            console.log("Received group_message:", data);
+            try {
+                const { groupId, from, text, type, mediaUrl } = data;
+
+                // Save to DB
+                const msgRes = await pool.query(
+                    `INSERT INTO group_messages (group_id, sender_id, text, type, media_url) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+                    [groupId, from, text || '', type || 'text', mediaUrl || null]
+                );
+
+                // Update Group Sidebar Preview
+                let preview = type === 'audio' ? '🎤 Voice' : (type === 'image' ? '📷 Image' : text);
+                // Need to fetch sender name for the preview: "Alice: Hello"
+                const senderRes = await pool.query('SELECT username, avatar_url FROM users WHERE id = $1', [from]);
+                const senderName = senderRes.rows[0].username;
+
+                await pool.query(`UPDATE groups SET last_message = $1, updated_at = NOW() WHERE id = $2`, [`${senderName}: ${preview}`, groupId]);
+
+                const fullMsg = {
+                    ...data,
+                    id: msgRes.rows[0].id,
+                    timestamp: msgRes.rows[0].created_at,
+                    sender_name: senderName,
+                    sender_avatar: senderRes.rows[0].avatar_url
+                };
+
+                // BROADCAST TO ROOM (Everyone in the group gets this)
+                console.log(`Broadcasting to room ${groupId}`, fullMsg);
+                io.to(groupId).emit('group_message', fullMsg);
+
+            } catch (err) { console.error("Group Msg Error:", err); }
+        });
+
+        // 4. JOIN NEW GROUP (Real-time update)
+        socket.on('join_group', (groupId) => {
+            socket.join(groupId);
+        });
+
+        // Video Signaling (Keep existing)
         socket.on('call_user', (data) => {
-            const { userToCall, signalData, from } = data;
-            const socketId = onlineUsers.get(userToCall);
-            if (socketId) {
-                io.to(socketId).emit('call_incoming', {
-                    signal: signalData,
-                    from
-                });
-            }
+            const socketId = onlineUsers.get(data.userToCall);
+            if (socketId) io.to(socketId).emit('call_incoming', { signal: data.signalData, from: data.from });
+        });
+        socket.on('answer_call', (data) => {
+            const socketId = onlineUsers.get(data.to);
+            if (socketId) io.to(socketId).emit('call_accepted', data.signal);
         });
 
-        // 2. ANSWER CALL
-        socket.on('answer_call', (data) => {
-            const { to, signal } = data;
-            const socketId = onlineUsers.get(to);
-            if (socketId) {
-                io.to(socketId).emit('call_accepted', signal);
-            }
+
+
+        // 3. New user returns signal to existing user
+        socket.on("returning_signal", payload => {
+            io.to(payload.callerID).emit('receiving_returned_signal', { signal: payload.signal, id: socket.id });
+        });
+
+        // 4. Leave room
+        socket.on('leave_room', (roomId) => {
+            socket.leave(roomId);
+            socket.to(roomId).emit('user_left', socket.id);
+        });
+
+        // 5. Handle Disconnect (Tab Close/Refresh)
+        socket.on('disconnecting', () => {
+            socket.rooms.forEach(room => {
+                socket.to(room).emit('user_left', socket.id);
+            });
+            onlineUsers.forEach((value, key) => {
+                if (value === socket.id) onlineUsers.delete(key);
+            });
+            if (global.socketToUser) global.socketToUser.delete(socket.id);
         });
     });
 

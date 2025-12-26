@@ -1,4 +1,4 @@
-import { Video, Phone, Paperclip, Mic, Send, StopCircle } from 'lucide-react';
+import { Video, Phone, Paperclip, Mic, Send, StopCircle, UserPlus } from 'lucide-react';
 import { Avatar } from './SettingsModal';
 import MessageBubble from './MessageBubble';
 import { useRef } from 'react';
@@ -7,7 +7,7 @@ export default function ChatWindow({
     activeChat, messages, user, newMessage, setNewMessage,
     sendMessage, fileInputRef, handleFileUpload,
     status, startRecording, stopRecording, messagesEndRef,
-    callUser
+    callUser, onAddMember
 }) {
     if (!activeChat) return (
         <div className="flex-1 bg-[#222e35] flex flex-col items-center justify-center border-b-[6px] border-[#00a884]">
@@ -21,10 +21,13 @@ export default function ChatWindow({
             {/* Header */}
             <div className="h-[64px] bg-[#202c33] flex items-center justify-between px-4 py-2 border-l border-[#374045] shrink-0">
                 <div className="flex items-center gap-4 cursor-pointer">
-                    <Avatar url={activeChat.avatar_url} name={activeChat.username} />
-                    <div className="text-[#e9edef] font-medium text-lg">{activeChat.username}</div>
+                    <Avatar url={activeChat.avatar_url} name={activeChat.name || activeChat.username} />
+                    <div className="text-[#e9edef] font-medium text-lg">{activeChat.name || activeChat.username}</div>
                 </div>
                 <div className="flex gap-6 text-[#aebac1]">
+                    {activeChat.isGroup && (
+                        <button onClick={onAddMember} title="Add Members" className="hover:text-white transition"><UserPlus size={22} /></button>
+                    )}
                     <button onClick={callUser} className="hover:text-white transition"><Video size={22} /></button>
                     <button className="hover:text-white transition"><Phone size={22} /></button>
                 </div>

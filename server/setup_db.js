@@ -54,6 +54,45 @@ const createTables = async () => {
         `);
         console.log('✅ Created Table: messages');
 
+        // 5. Create Groups Table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS groups (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name VARCHAR(100) NOT NULL,
+                admin_id UUID REFERENCES users(id),
+                last_message TEXT,
+                avatar_url TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('✅ Created Table: groups');
+
+        // 6. Create Group Members Table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+                user_id UUID REFERENCES users(id),
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (group_id, user_id)
+            );
+        `);
+        console.log('✅ Created Table: group_members');
+
+        // 7. Create Group Messages Table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS group_messages (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+                sender_id UUID REFERENCES users(id),
+                text TEXT,
+                type VARCHAR(50) DEFAULT 'text',
+                media_url TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('✅ Created Table: group_messages');
+
         console.log('🎉 Database Upgrade Complete!');
         process.exit(0);
 
